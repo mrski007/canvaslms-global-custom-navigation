@@ -100,6 +100,43 @@
     }
   };
 
+  globalCustomNav.watch_glbl_tray = (_mtx, observer) => {
+    let portal = document.querySelector(globalCustomNav.cfg.glbl.tray_portal);
+    if (!portal) {
+      if (typeof observer === 'undefined') {
+        var obs = new MutationObserver(globalCustomNav.watch_glbl_tray);
+        obs.observe(document.body, { childList: true });
+      }
+      return;
+    }
+    if (typeof observer !== 'undefined') {
+       observer.disconnect();
+    }
+    let tray = new MutationObserver(globalCustomNav.exit_glbl_tray);
+    tray.observe(portal, { 'childList': true });
+  };
+  
+  globalCustomNav.exit_glbl_tray = (_mtx, observer) => {
+    let tray_portal_open = document.querySelector(globalCustomNav.cfg.glbl.tray_portal).children.length ? true : false;
+    let rspv_nav = document.querySelector(globalCustomNav.cfg.rspv.nav_selector.slice(0,-3));
+    
+    if (rspv_nav != null && tray_portal_open) {
+      if (typeof observer === 'undefined') {
+        var obs = new MutationObserver(globalCustomNav.exit_glbl_tray);
+        obs.observe(document.body, { childList: true });
+      }
+      return;
+    }
+    if (rspv_nav == null && !tray_portal_open) {
+      globalCustomNav.glbl_active_class_clear();
+      // ensure active class is restored to appropriate icon based on context
+      console.log(globalCustomNav.cfg.context_item)
+      document.getElementById(globalCustomNav.cfg.context_item).closest('li').classList.add(globalCustomNav.cfg.glbl.trayActiveClass);
+      observer.disconnect();
+      globalCustomNav.watch_glbl_tray();
+    }
+  };
+
   globalCustomNav.prepare_nav_items = (items, hamb = true) => {
     items.forEach(item => {
       // if roles for the current item are not set, the user can see it, otherwise
@@ -122,6 +159,13 @@
       target_li.after(icon);
     } else {
       target_li.before(icon);
+    }
+    
+    const regex = new RegExp(`^${item.href}`);
+    if(!hamb && regex.test(window.location.pathname)) {
+      globalCustomNav.glbl_active_class_clear();
+      // set active class if icon is current context path
+      document.getElementById(item.slug).closest('li').classList.add(globalCustomNav.cfg.glbl.trayActiveClass);
     }
   };
 
@@ -156,7 +200,7 @@
 
     try {
       // inst-ui 7 or 8 or global or hamb
-      var icon_text_el = icon.querySelector('span[letter-spacing="normal"') || (icon.querySelector('.menu-item__text') || icon.querySelector('span[class$="text"]'));
+      var icon_text_el = icon.querySelector('span[letter-spacing="normal"]') || (icon.querySelector('.menu-item__text') || icon.querySelector('span[class$="text"]'));
       icon_text_el.textContent = item.title;
     } catch (e) {
       console.log(e);
@@ -296,13 +340,16 @@
   globalCustomNav.load = (opts) => {
     const lang_dir = document.querySelector('html').getAttribute('dir') ?? 'ltr';
     globalCustomNav.cfg = {
+      context_item: '',
       glbl: {
         nav_selector: '#menu',
+        tray_portal: '#nav-tray-portal',
         menuItemClass: `ic-app-header__menu-list-item`,
         trayActiveClass: `ic-app-header__menu-list-item--active`
       },
       rspv: {
         nav_selector: `span[dir="${lang_dir}"] div[role="dialog"] ul`,
+        // TODO brand colors
         INSTUI_aodown: `<svg name="IconArrowOpenDown" viewBox="0 0 1920 1920" rotate="0" style="width: 1em; height: 1em;" 
         width="1em" height="1em" aria-hidden="true" role="presentation" focusable="false" class="dUOHu_bGBk dUOHu_drOs dUOHu_eXrk cGqzL_bGBk">
         <g role="presentation"><path d="M568.129648 0.0124561278L392 176.142104 1175.86412 960.130789 392 1743.87035 568.129648 1920 1528.24798 960.130789z" 
@@ -316,14 +363,30 @@
     if (document.querySelector(globalCustomNav.cfg.glbl.nav_selector) !== 'undefined') {
       globalCustomNav.nav_items = opts;
       globalCustomNav.prepare_nav_items(globalCustomNav.nav_items, false);
+      globalCustomNav.watch_glbl_tray();
     }
     globalCustomNav.watch_burger_tray();
   };
+
+  globalCustomNav.glbl_active_class_clear = () => {
+    Array.from(document.querySelectorAll(`${globalCustomNav.cfg.glbl.nav_selector} .${globalCustomNav.cfg.glbl.trayActiveClass}`)).forEach(e => {
+      e.classList.toggle(globalCustomNav.cfg.glbl.trayActiveClass);
+    });
+  }
 
   globalCustomNav.glbl_tray_toggle = (item, click) => {
     // bind/click on each menu item, if current is custom open
     // if clicked menu item is not custom, close custom trays
     Array.from(document.querySelectorAll(`${globalCustomNav.cfg.glbl.nav_selector} li`)).forEach(nav => {
+      if(nav.classList.contains(globalCustomNav.cfg.glbl.trayActiveClass) == true) {
+        // preserve the nav item to restore active class when a tray is closed
+        // handle primary routes, external tools, and custom contexts
+        // TODO verify? custom context active has to override native tray when native tray is exited... hmmm mutation observer?
+        // ALSO... the tray does not exit when clicking outside, this is true for the native instui (prod/beta/bug?) (true for studio, not true for commons)
+        globalCustomNav.cfg.context_item = nav.querySelector('a').getAttribute('id') || nav.querySelector('a').closest('li').getAttribute('id');
+        console.log(globalCustomNav.cfg.context_item)
+      }
+
       nav.addEventListener('click', function (ne) {
         const regex = new RegExp(item.tidle);
         if (!regex.test(ne.target.closest('a').id)) {
@@ -332,11 +395,6 @@
           }
         }
       })
-    });
-
-    // clear all
-    Array.from(document.querySelectorAll(`${globalCustomNav.cfg.glbl.nav_selector} .${globalCustomNav.cfg.glbl.trayActiveClass}`)).forEach(e => {
-      e.classList.toggle(globalCustomNav.cfg.glbl.trayActiveClass);
     });
 
     // toggle'd and tray content is not loaded
@@ -351,7 +409,8 @@
         document.getElementById(`${item.slug}-tray`).remove();
         document.getElementById(item.slug).closest('li').classList.remove(globalCustomNav.cfg.glbl.trayActiveClass);
 
-        // TODO Ensure tray active class is restored to appropriate icon based on context
+        // ensure active class is restored to appropriate icon based on context
+        document.getElementById(globalCustomNav.cfg.context_item).closest('li').classList.add(globalCustomNav.cfg.glbl.trayActiveClass);
       } catch (e) {
         console.log(e);
       }
@@ -420,7 +479,8 @@
           .closest('li')
           .classList.remove(globalCustomNav.cfg.glbl.trayActiveClass);
 
-        // TODO Ensure active class is restored to appropriate icon based on context
+        // ensure active class is restored to appropriate icon based on context
+        document.getElementById(globalCustomNav.cfg.context_item).closest('li').classList.add(globalCustomNav.cfg.glbl.trayActiveClass);
       });
 
       // slide out tray on close
@@ -444,7 +504,8 @@
               .closest('li')
               .classList.remove(globalCustomNav.cfg.glbl.trayActiveClass);
   
-            // TODO Ensure active class is restored to appropriate icon based on context
+            // ensure active class is restored to appropriate icon based on context
+            document.getElementById(globalCustomNav.cfg.context_item).closest('li').classList.add(globalCustomNav.cfg.glbl.trayActiveClass);
           });
   
           // slide out tray on close
@@ -520,6 +581,14 @@
       href: 'https://community.canvaslms.com/',
       target: '_blank',
       position: 1, // can be one of : integer (position after first), 'after' (help or last), 'before' (help or last)
+    },
+    {
+      title: 'Custom Context',
+      // example only, host your own, or use icon class
+      icon_svg: 'icon-expand-start',
+      href: '/courses/1234567',
+      target: '',
+      //position: 'before' // default
     },
     {
       title: 'External Icon',
